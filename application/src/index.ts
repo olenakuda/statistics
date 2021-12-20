@@ -1,18 +1,16 @@
 import express, { Application, Request, Response } from "express";
 import _ from "lodash"; 
 import axios from 'axios';
-var cors = require('cors');
+const cors = require('cors');
 
 const app: Application = express();
 const port = 3000;
 const url = "/matches"
 
-
-var corsOptions = {
+const corsOptions = {
     origin: '*',
     optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
 }
-
 
 async function getTournamentsDataAsync(){
     const res = await axios
@@ -62,9 +60,8 @@ interface IStatistics{
 }
 
 function convertToMatch(obj: any, tid: number) : IMatch {    
-    var dateParts = obj.time.date.split("/").reverse();
+    const dateParts = obj.time.date.split("/").reverse();
     const dateTimeString = `20${dateParts[0]}-${dateParts[1]}-${dateParts[2]}T${obj.time.time}`;
-    //console.log(dateTimeString);
     return {
         tournamentId: tid,
         dateTime: new Date(dateTimeString),
@@ -104,22 +101,34 @@ app.get(
     cors(corsOptions),
     async (req: Request, res: Response): Promise<Response> => {
         const allTournaments = await getTournamentsDataAsync();
+
         const tournaments = allTournaments.tournaments;
         const uniquetournaments = allTournaments.uniquetournaments;
 
         const allMatches = new Array<IMatch>();
         const allTournamentsNormalised = new Array<ITournament>();
-        
+
         for (const tournament of tournaments) {
-            const matches = await getMatchesDataAsync(tournament._id);
-            populate(matches, tournament, allMatches, allTournamentsNormalised)
-        }
+            allTournamentsNormalised.push(
+                convertToTournament(tournament)
+            );
+       }
         for (const uniquetournamentId of Object.keys(uniquetournaments)) {
             const uniquetournament = uniquetournaments[uniquetournamentId];
-            const matches = await getMatchesDataAsync(uniquetournament._id);
-            if(matches.length == 0) break;
-            populate(matches, uniquetournament, allMatches, allTournamentsNormalised)
+            allTournamentsNormalised.push(
+                convertToTournament(uniquetournament)
+            );
         }
+
+        await Promise.all(
+            _.map(allTournamentsNormalised, tournament => {
+                return getMatchesDataAsync(tournament.id)
+                    .then(matches => {
+                        console.log('inside get maches batch item');
+                        allMatches.push(...matches);
+                    });
+            })
+        );
 
         const ordered = _.orderBy(allMatches, x => x.dateTime, "desc");
         const limited = _.take(ordered, 5);
@@ -127,26 +136,14 @@ app.get(
 
         const statistics = new Array<IStatistics>();
 
-        for (const id of Object.keys(grouped)) {
-            const tournament = allTournamentsNormalised.find(e => e.id == parseInt(id) ? e:null);
+        _.map(Object.keys(grouped), id => {
+            const tournament = _.find(allTournamentsNormalised, ['id', parseInt(id)]);
             if(tournament){
-            statistics.push(convertToStatistics(tournament, grouped[id]));
-        }
-    }
+                statistics.push(convertToStatistics(tournament, grouped[id]));
+            }
+        })
         return res.status(200).send({
            statistics
-        });
-    }
-);
-
-app.get(
-    "/test",
-    cors(corsOptions),
-    async (req: Request, res: Response): Promise<Response> => {
-        console.log('TEST');
-        const matches = await getMatchesDataAsync(1);
-        return res.status(200).send({
-            matches
         });
     }
 );
@@ -158,5 +155,3 @@ try {
 } catch (error:any) {
     console.error(`Error occured: ${error.message}`);
 }
-
-console.log('--------------------------------------------------------------------------------------------------------------------------');
